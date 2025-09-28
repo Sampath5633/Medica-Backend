@@ -25,6 +25,8 @@ from flask_mail import Mail, Message
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import traceback
+from datetime import datetime, timedelta, timezone
+
 from pymongo import MongoClient
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask import Flask, request, jsonify
@@ -118,7 +120,7 @@ def login_step1():
 
         # If not verified, send code
         verification_code = str(random.randint(100000, 999999))
-        expiry = datetime.utcnow() + timedelta(minutes=10)
+        expiry = datetime.now(timezone.utc) + timedelta(minutes=10)
 
         users.update_one(
             {"email": email},
@@ -154,7 +156,7 @@ def login_step2():
         if user.get("verification_code") != code:
             return jsonify({"message": "Invalid verification code"}), 401
 
-        if datetime.utcnow() > user.get("code_expiry"):
+        if datetime.now(timezone.utc) > user.get("reset_expiry"):
             return jsonify({"message": "Code expired"}), 401
 
         users.update_one(
@@ -182,7 +184,9 @@ def send_reset_code():
             return jsonify({"message": "Email not found"}), 404
 
         reset_code = str(random.randint(100000, 999999))
-        expiry = datetime.utcnow() + timedelta(minutes=10)
+
+# New:
+        expiry = datetime.now(timezone.utc) + timedelta(minutes=10)
 
         users.update_one(
             {"email": email},
@@ -217,7 +221,7 @@ def reset_password():
         if user.get("reset_code") != code:
             return jsonify({"message": "Invalid reset code"}), 401
 
-        if datetime.utcnow() > user.get("reset_expiry"):
+        if datetime.now(timezone.utc) > user.get("reset_expiry"):
             return jsonify({"message": "Reset code expired"}), 401
 
         hashed_password = generate_password_hash(new_password)
