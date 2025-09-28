@@ -144,45 +144,51 @@ def login_step1():
         print("❌ login-step1 error:", e)
         return jsonify({"message": "Login step 1 failed", "error": str(e)}), 500
 
-# === Login Step 2 ===
 @app.route("/api/login-step2", methods=["POST"])
 def login_step2():
     try:
         data = request.get_json()
         email = data.get("email")
         code = data.get("code")
-
-        if not email or not code:
-            return jsonify({"message": "Email and verification code are required"}), 400
+        print("Login Step 2 - email:", email, "code:", code)
 
         user = users.find_one({"email": email})
+        print("User found:", user)
+
         if not user:
             return jsonify({"message": "User not found"}), 404
 
         if user.get("is_verified", False):
             return jsonify({"message": "Already verified", "token": "dummy_token"}), 200
 
-        stored_code = user.get("verification_code")
-        code_expiry = user.get("code_expiry")
-
-        if stored_code != code:
+        if user.get("verification_code") != code:
             return jsonify({"message": "Invalid verification code"}), 401
 
-        if not code_expiry or datetime.now(timezone.utc) > code_expiry:
+        code_expiry = user.get("code_expiry")
+        if not code_expiry:
+            return jsonify({"message": "Verification code missing"}), 400
+
+        # Ensure timezone-aware comparison
+        now = datetime.now(timezone.utc)
+        if now > code_expiry:
             return jsonify({"message": "Verification code expired"}), 401
 
-        # Mark user as verified
+        # Update user as verified and remove verification code
         users.update_one(
             {"email": email},
-            {"$set": {"is_verified": True},
-             "$unset": {"verification_code": "", "code_expiry": ""}}
+            {
+                "$unset": {"verification_code": "", "code_expiry": ""},
+                "$set": {"is_verified": True}
+            }
         )
+        print(f"✅ User {email} verified successfully")
 
         return jsonify({"message": "Login successful", "token": "dummy_token"}), 200
 
     except Exception as e:
-        print("❌ login-step2 error:", e)
+        print("❌ /api/login-step2 error:", e)
         return jsonify({"message": "Login step 2 failed", "error": str(e)}), 500
+
 
 
 # === Send Reset Code ===
@@ -224,7 +230,6 @@ def send_reset_code():
         print("❌ send-reset-code error:", e)
         return jsonify({"message": "Failed to send reset code", "error": str(e)}), 500
 
-# === Reset Password ===
 @app.route("/api/reset-password", methods=["POST"])
 def reset_password():
     try:
@@ -232,35 +237,42 @@ def reset_password():
         email = data.get("email")
         code = data.get("code")
         new_password = data.get("newPassword")
-
-        if not email or not code or not new_password:
-            return jsonify({"message": "Email, reset code, and new password are required"}), 400
+        print("Reset password - email:", email, "code:", code)
 
         user = users.find_one({"email": email})
+        print("User found:", user)
+
         if not user:
             return jsonify({"message": "User not found"}), 404
 
-        stored_code = user.get("reset_code")
-        reset_expiry = user.get("reset_expiry")
-
-        if stored_code != code:
+        if user.get("reset_code") != code:
             return jsonify({"message": "Invalid reset code"}), 401
 
-        if not reset_expiry or datetime.now(timezone.utc) > reset_expiry:
+        reset_expiry = user.get("reset_expiry")
+        if not reset_expiry:
+            return jsonify({"message": "Reset expiry missing"}), 400
+
+        now = datetime.now(timezone.utc)
+        if now > reset_expiry:
             return jsonify({"message": "Reset code expired"}), 401
 
+        # Update password
         hashed_password = generate_password_hash(new_password)
         users.update_one(
             {"email": email},
-            {"$set": {"password": hashed_password},
-             "$unset": {"reset_code": "", "reset_expiry": ""}}
+            {
+                "$set": {"password": hashed_password},
+                "$unset": {"reset_code": "", "reset_expiry": ""}
+            }
         )
+        print(f"✅ Password reset successfully for {email}")
 
         return jsonify({"message": "Password reset successful"}), 200
 
     except Exception as e:
-        print("❌ reset-password error:", e)
+        print("❌ /api/reset-password error:", e)
         return jsonify({"message": "Failed to reset password", "error": str(e)}), 500
+
 
 # === Proxy to Hugging Face for Prediction ===
 @app.route("/predict", methods=["POST"])
