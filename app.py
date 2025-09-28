@@ -62,6 +62,13 @@ def send_verification_email(email, code):
     mail.send(msg)
     print(f"✅ Email sent to {email} with code {code}")
 
+# === Utility: Send Password Reset Email ===
+def send_password_reset_email(email, code):
+    msg = Message("Your Password Reset Code", sender=gmail_user, recipients=[email])
+    msg.body = f"Your password reset code is: {code}"
+    mail.send(msg)
+    print(f"✅ Password reset email sent to {email}")
+
 # === Register Endpoint ===
 @app.route("/api/register", methods=["POST"])
 def register():
@@ -91,6 +98,9 @@ def login_step1():
         data = request.get_json()
         email = data.get("email")
         password = data.get("password")
+
+        # --- TEMPORARY DEBUGGING: Remove after testing ---
+        print(f"🕵️  Attempting login for email: '{email}' with password: '{password[:2]}...'")
 
         if not email or not password:
             return jsonify({"message": "Email and password are required"}), 400
@@ -200,10 +210,7 @@ def send_reset_code():
 
         # Send email
         try:
-            msg = Message("Password Reset Code", sender=gmail_user, recipients=[email])
-            msg.body = f"Your password reset code is: {reset_code}"
-            mail.send(msg)
-            print(f"✅ Reset code sent to {email}")
+            send_password_reset_email(email, reset_code)
         except Exception as e:
             print("❌ Failed to send reset email:", e)
             return jsonify({"message": "Failed to send reset email", "error": str(e)}), 500
@@ -222,6 +229,10 @@ def reset_password():
         code = data.get("code")
         new_password = data.get("newPassword")
         print("Reset password - email:", email, "code:", code)
+
+        # --- FIX: Add validation for missing inputs ---
+        if not code or not new_password:
+            return jsonify({"message": "Reset code and new password are required"}), 400
 
         user = users.find_one({"email": email})
         print("User found:", user)
