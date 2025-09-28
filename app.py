@@ -41,8 +41,7 @@ load_dotenv(dotenv_path=env_path)
 app = Flask(__name__)
 
 # === Enable CORS for frontend ===
-CORS(app, origins=["https://medica3.netlify.app"], supports_credentials=True)
-
+CORS(app, origins=["https://medica3.netlify.app"])
 
 @app.before_request
 def log_request_info():
