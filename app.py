@@ -1,39 +1,23 @@
 import os
-import numpy as np
 import requests
 import random
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from flask_mail import Mail, Message
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from pathlib import Path
-import numpy as np
-from medication_patterns import default_patterns
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
-
-from flask import Flask, request, jsonify, send_file
-# Temporary storage for prescriptions (you may replace with DB)
-PRESCRIPTIONS = {}
-from flask import Flask, request, jsonify
-from your_gemini_util import fetch_gemini_response 
-from flask_cors import CORS
-from flask_mail import Mail, Message
-from datetime import datetime, timedelta
-from dotenv import load_dotenv
-import traceback
-from datetime import datetime, timedelta, timezone
-
 from pymongo import MongoClient
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask import Flask, request, jsonify
-from pymongo import MongoClient
-from flask_cors import CORS
-from datetime import datetime
 
+from medication_patterns import default_patterns
+from your_gemini_util import fetch_gemini_response 
+
+# Temporary storage for prescriptions (you may replace with DB)
+# This is currently unused, but keeping it in case it's for future use.
+PRESCRIPTIONS = {}
 
 # === Load Environment Variables ===
 env_path = Path(__file__).parent / '.env'
@@ -81,7 +65,7 @@ def send_verification_email(email, code):
 # === Register Endpoint ===
 @app.route("/api/register", methods=["POST"])
 def register():
-    data = request.get_json(force=True)
+    data = request.get_json()
     email = data.get("email")
     password = data.get("password")
 
@@ -312,7 +296,7 @@ def generate_treatment():
     try:
         
 
-        data = request.get_json(force=True)
+        data = request.get_json()
         disease = data.get("disease", "").strip()
         symptoms = data.get("symptoms", [])
         age = data.get("age")
@@ -377,7 +361,7 @@ Instructions:
 @app.route("/api/treatment/download", methods=["POST"])
 def download_prescription():
     try:
-        data = request.get_json(force=True)
+        data = request.get_json()
         prescription = data  # expects full prescription JSON
 
         filename = "prescription.pdf"
@@ -462,7 +446,7 @@ def store_feedback():
     }
     
     try:
-        db.feedback.insert_one(feedback_data)
+        feedback_collection.insert_one(feedback_data)
         return jsonify({'success': True, 'message': 'Feedback submitted successfully'})
     except Exception as e:
         return jsonify({'error': 'Failed to store feedback', 'details': str(e)}), 500
@@ -484,7 +468,7 @@ def submit_feedback():
             "timestamp": timestamp
         }
 
-        db.feedback.insert_one(feedback)
+        feedback_collection.insert_one(feedback)
         return jsonify({"success": True, "message": "Feedback submitted successfully"}), 200
 
     except Exception as e:
