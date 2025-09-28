@@ -106,16 +106,20 @@ def login_step1():
         email, password = data.get("email"), data.get("password")
 
         user = users.find_one({"email": email})
+
         if not user:
             return jsonify({"message": "User not found"}), 404
+
         if not check_password_hash(user["password"], password):
             return jsonify({"message": "Invalid password"}), 401
+
         if user.get("is_verified", False):
             return jsonify({"token": "dummy_token"}), 200
 
-        # Generate code without sending email
+        # If not verified, send code
         verification_code = str(random.randint(100000, 999999))
         expiry = datetime.utcnow() + timedelta(minutes=10)
+
         users.update_one(
             {"email": email},
             {"$set": {
@@ -124,14 +128,12 @@ def login_step1():
             }}
         )
 
-        # COMMENT OUT EMAIL
-        # send_verification_email(email, verification_code)
+        send_verification_email(email, verification_code)
 
-        return jsonify({"step": 2, "message": "Verification code generated", "verification_code": verification_code}), 200
+        return jsonify({"step": 2, "message": "Verification code sent"}), 200
 
     except Exception as e:
         return jsonify({"message": "Login step 1 failed", "error": str(e)}), 500
-
 
 # === Login Step 2 ===
 @app.route("/api/login-step2", methods=["POST"])
