@@ -1,5 +1,5 @@
 Flask==2.3.3
-flask-cors==3.1.13
+flask-cors==3.1.2
 flask-mail==0.9.1
 fastapi==0.117.1
 uvicorn==0.37.0
