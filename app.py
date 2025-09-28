@@ -27,7 +27,6 @@ from dotenv import load_dotenv
 import traceback
 from pymongo import MongoClient
 from werkzeug.security import generate_password_hash, check_password_hash
-from serpapi_util import fetch_search_results
 from flask import Flask, request, jsonify
 from pymongo import MongoClient
 from flask_cors import CORS
