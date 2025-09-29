@@ -37,18 +37,21 @@ def log_request_info():
     print(f"➡️ {request.method} {request.path}")
     if request.method == 'OPTIONS':
         print("🔄 Handling preflight OPTIONS request")
+# === SECRET_KEY for JWT ===
+app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "default_secret_key_here")
+if not app.config["SECRET_KEY"]:
+    raise ValueError("SECRET_KEY is not set in environment variables!")
 
 # === Mail Configuration ===
 app.config.update(
-    MAIL_SERVER="smtp.gmail.com",
-    MAIL_PORT=587,
-    MAIL_USERNAME=os.getenv("MAIL_USERNAME"),       # your Gmail
-    MAIL_PASSWORD=os.getenv("MAIL_APP_PASSWORD"),   # App Password
-    MAIL_USE_TLS=True,
-    MAIL_USE_SSL=False
+    MAIL_SERVER=os.getenv("MAIL_SERVER"),
+    MAIL_PORT=int(os.getenv("MAIL_PORT", 587)),
+    MAIL_USERNAME=os.getenv("MAIL_USERNAME"),
+    MAIL_PASSWORD=os.getenv("MAIL_PASSWORD"),
+    MAIL_USE_TLS=os.getenv("MAIL_USE_TLS", "True") == "True",
+    MAIL_USE_SSL=os.getenv("MAIL_USE_SSL", "False") == "True"
 )
 mail = Mail(app)
-
 # === MongoDB Setup ===
 mongo_uri = os.getenv("MONGO_URI")
 client = MongoClient(mongo_uri)
