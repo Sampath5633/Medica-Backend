@@ -11,6 +11,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from pymongo import MongoClient
 from werkzeug.security import generate_password_hash, check_password_hash
+import jwt
 
 from medication_patterns import default_patterns
 from your_gemini_util import fetch_gemini_response 
@@ -38,14 +39,13 @@ def log_request_info():
         print("🔄 Handling preflight OPTIONS request")
 
 # === Mail Configuration ===
-gmail_user = os.getenv("MAIL_USERNAME")
 app.config.update(
-    MAIL_SERVER=os.getenv("MAIL_SERVER"),
-    MAIL_PORT=int(os.getenv("MAIL_PORT", 587)),
-    MAIL_USERNAME=gmail_user,
-    MAIL_PASSWORD=os.getenv("MAIL_PASSWORD"),
-    MAIL_USE_TLS=os.getenv("MAIL_USE_TLS", "True") == "True",
-    MAIL_USE_SSL=os.getenv("MAIL_USE_SSL", "False") == "True"
+    MAIL_SERVER="smtp.gmail.com",
+    MAIL_PORT=587,
+    MAIL_USERNAME=os.getenv("MAIL_USERNAME"),       # your Gmail
+    MAIL_PASSWORD=os.getenv("MAIL_APP_PASSWORD"),   # App Password
+    MAIL_USE_TLS=True,
+    MAIL_USE_SSL=False
 )
 mail = Mail(app)
 
@@ -53,172 +53,204 @@ mail = Mail(app)
 mongo_uri = os.getenv("MONGO_URI")
 client = MongoClient(mongo_uri)
 db = client["medicalDB"]
-users = db["users"]
+users_collection = db["users"]
 feedback_collection = db["feedbacks"]   
 
 # === Utility: Send Email ===
-def send_verification_email(email, code):
-    msg = Message("Your Verification Code", sender=gmail_user, recipients=[email])
-    msg.body = f"Your verification code is: {code}"
-    mail.send(msg)
-    print(f"✅ Email sent to {email} with code {code}")
+def generate_jwt(email):
+    payload = {"email": email, "exp": datetime.utcnow() + timedelta(hours=2)}
+    token = jwt.encode(payload, app.config["SECRET_KEY"], algorithm="HS256")
+    return token
 
-# === Register Endpoint ===
+def generate_code():
+    return str(random.randint(100000, 999999))
+
+# === Utility function for sending emails ===
+def send_email(subject, recipient, body):
+    try:
+        msg = Message(
+            subject=subject,
+            sender=app.config["MAIL_USERNAME"],
+            recipients=[recipient],
+        )
+        msg.body = body
+        mail.send(msg)
+        print(f"✅ Email sent to {recipient}")
+        return True
+    except Exception as e:
+        print("❌ Email send failed:", e)
+        return False
+
+# === Send Verification Code ===
+@app.route("/api/send-verification-code", methods=["POST"])
+def send_verification_code():
+    data = request.json
+    user_email = data.get("email")
+    if not isinstance(user_email, str) or not user_email.strip():
+        return jsonify({"error": "Email is required"}), 400
+
+    code = generate_code()
+    users_collection.update_one(
+        {"email": user_email},
+        {"$set": {"verification_code": code, "code_expiry": datetime.utcnow() + timedelta(minutes=10)}},
+        upsert=True
+    )
+
+    if send_email("🔐 Your Verification Code", user_email, f"Your verification code is {code}. It will expire in 10 minutes."):
+        return jsonify({"message": "Verification code sent successfully"})
+    else:
+        return jsonify({"error": "Failed to send verification code"}), 500
+
+# === Register ===
 @app.route("/api/register", methods=["POST"])
 def register():
     data = request.get_json(force=True)
     email = data.get("email")
     password = data.get("password")
 
-    if not email or not password:
-        return jsonify({"message": "Missing email or password"}), 400
+    if not isinstance(email, str) or not isinstance(password, str):
+        return jsonify({"message": "Missing or invalid email/password"}), 400
 
-    if users.find_one({"email": email}):
+    if users_collection.find_one({"email": email}):
         return jsonify({"message": "User already exists"}), 400
 
     hashed_password = generate_password_hash(password)
-    users.insert_one({
+    users_collection.insert_one({
         "email": email,
         "password": hashed_password,
         "is_verified": False
     })
-
     return jsonify({"message": "Registration successful"}), 201
 
 # === Login Step 1 ===
 @app.route("/api/login-step1", methods=["POST"])
 def login_step1():
     try:
-        data = request.get_json()
-        email, password = data.get("email"), data.get("password")
+        data = request.get_json(force=True)
+        email = data.get("email")
+        password = data.get("password")
 
-        user = users.find_one({"email": email})
+        if not isinstance(email, str) or not isinstance(password, str):
+            return jsonify({"message": "Email and password must be strings"}), 400
 
+        user = users_collection.find_one({"email": email})
         if not user:
-            return jsonify({"message": "User not found"}), 404
+            return jsonify({"message": "User not found"}), 401
 
-        if not check_password_hash(user["password"], password):
-            return jsonify({"message": "Invalid password"}), 401
+        stored_password = user.get("password")
+        if not isinstance(stored_password, str):
+            return jsonify({"message": "Invalid credentials"}), 401
+
+        if not check_password_hash(stored_password, password):
+            return jsonify({"message": "Invalid credentials"}), 401
 
         if user.get("is_verified", False):
-            return jsonify({"token": "dummy_token"}), 200
+            token = generate_jwt(email)
+            return jsonify({"token": token}), 200
 
-        # If not verified, send code
-        verification_code = str(random.randint(100000, 999999))
-        expiry = datetime.utcnow() + timedelta(minutes=10)
-
-        users.update_one(
+        # Send verification code
+        code = generate_code()
+        users_collection.update_one(
             {"email": email},
-            {"$set": {
-                "verification_code": verification_code,
-                "code_expiry": expiry
-            }}
+            {"$set": {"verification_code": code, "code_expiry": datetime.utcnow() + timedelta(minutes=10)}}
         )
-
-        send_verification_email(email, verification_code)
-
-        return jsonify({"step": 2, "message": "Verification code sent"}), 200
-
+        send_email("Your MEDICA Verification Code", email, f"Your verification code is: {code}")
+        return jsonify({"step": 2}), 200
     except Exception as e:
-        return jsonify({"message": "Login step 1 failed", "error": str(e)}), 500
+        print("Error in login-step1:", e)
+        return jsonify({"message": "Internal Server Error"}), 500
 
 # === Login Step 2 ===
 @app.route("/api/login-step2", methods=["POST"])
 def login_step2():
     try:
-        data = request.get_json()
+        data = request.get_json(force=True)
         email = data.get("email")
         code = data.get("code")
 
-        user = users.find_one({"email": email})
+        if not isinstance(email, str) or not isinstance(code, str):
+            return jsonify({"message": "Email and code must be strings"}), 400
 
+        user = users_collection.find_one({"email": email})
         if not user:
             return jsonify({"message": "User not found"}), 404
 
         if user.get("is_verified", False):
-            return jsonify({"message": "Already verified", "token": "dummy_token"}), 200
+            token = generate_jwt(email)
+            return jsonify({"message": "Already verified", "token": token}), 200
 
         if user.get("verification_code") != code:
             return jsonify({"message": "Invalid verification code"}), 401
 
-        if datetime.utcnow() > user.get("code_expiry"):
+        if datetime.utcnow() > user.get("code_expiry", datetime.utcnow()):
             return jsonify({"message": "Code expired"}), 401
 
-        users.update_one(
-                {"email": email},
-                {
-                    "$unset": {"verification_code": "", "code_expiry": ""},
-                    "$set": {"is_verified": True}  # ✅ Mark user as verified
-                }
-            )
-
-        return jsonify({"message": "Login successful", "token": "dummy_token"}), 200
-
+        users_collection.update_one(
+            {"email": email},
+            {"$unset": {"verification_code": "", "code_expiry": ""},
+             "$set": {"is_verified": True}}
+        )
+        token = generate_jwt(email)
+        return jsonify({"message": "Login successful", "token": token}), 200
     except Exception as e:
+        print("Error in login-step2:", e)
         return jsonify({"message": "Login step 2 failed", "error": str(e)}), 500
 
-
+# === Send Reset Code ===
 @app.route("/api/send-reset-code", methods=["POST"])
 def send_reset_code():
     try:
-        data = request.get_json()
+        data = request.get_json(force=True)
         email = data.get("email")
+        if not isinstance(email, str):
+            return jsonify({"message": "Invalid email"}), 400
 
-        user = users.find_one({"email": email})
+        user = users_collection.find_one({"email": email})
         if not user:
-            return jsonify({"message": "Email not found"}), 404
+            return jsonify({"message": "User not found"}), 404
 
-        reset_code = str(random.randint(100000, 999999))
-        expiry = datetime.utcnow() + timedelta(minutes=10)
-
-        users.update_one(
+        code = generate_code()
+        users_collection.update_one(
             {"email": email},
-            {"$set": {
-                "reset_code": reset_code,
-                "reset_expiry": expiry
-            }}
+            {"$set": {"reset_code": code, "reset_expiry": datetime.utcnow() + timedelta(minutes=10)}}
         )
-
-        msg = Message("Password Reset Code", sender=gmail_user, recipients=[email])
-        msg.body = f"Your password reset code is: {reset_code}"
-        mail.send(msg)
-
+        send_email("MEDICA Password Reset Code", email, f"Your password reset code is: {code}")
         return jsonify({"message": "Reset code sent"}), 200
-
     except Exception as e:
-        return jsonify({"message": "Failed to send reset code", "error": str(e)}), 500
+        print("Error in send-reset-code:", e)
+        return jsonify({"message": "Internal Server Error"}), 500
 
+# === Reset Password ===
 @app.route("/api/reset-password", methods=["POST"])
 def reset_password():
-    
     try:
-        data = request.get_json()
+        data = request.get_json(force=True)
         email = data.get("email")
         code = data.get("code")
         new_password = data.get("newPassword")
 
-        user = users.find_one({"email": email})
+        if not all(isinstance(x, str) for x in [email, code, new_password]):
+            return jsonify({"message": "Invalid input"}), 400
+
+        user = users_collection.find_one({"email": email})
         if not user:
             return jsonify({"message": "User not found"}), 404
 
         if user.get("reset_code") != code:
             return jsonify({"message": "Invalid reset code"}), 401
 
-        if datetime.utcnow() > user.get("reset_expiry"):
+        if datetime.utcnow() > user.get("reset_expiry", datetime.utcnow()):
             return jsonify({"message": "Reset code expired"}), 401
 
         hashed_password = generate_password_hash(new_password)
-        users.update_one(
+        users_collection.update_one(
             {"email": email},
-            {
-                "$set": {"password": hashed_password},
-                "$unset": {"reset_code": "", "reset_expiry": ""}
-            }
+            {"$set": {"password": hashed_password},
+             "$unset": {"reset_code": "", "reset_expiry": ""}}
         )
-
         return jsonify({"message": "Password reset successful"}), 200
-
     except Exception as e:
+        print("Error in reset-password:", e)
         return jsonify({"message": "Failed to reset password", "error": str(e)}), 500
 
 
@@ -387,7 +419,7 @@ def download_prescription():
 @app.route("/api/ping-db", methods=["GET"])
 def ping_db():
     try:
-        count = users.count_documents({})
+        count = users_collection.count_documents({})
         return jsonify({"message": "MongoDB connected ✅", "user_count": count})
     except Exception as e:
         return jsonify({"error": f"MongoDB connection failed: {str(e)}"}), 500
