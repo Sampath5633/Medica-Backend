@@ -12,7 +12,8 @@ from reportlab.pdfgen import canvas
 from pymongo import MongoClient
 from werkzeug.security import generate_password_hash, check_password_hash
 import jwt
-
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
 from medication_patterns import default_patterns
 from your_gemini_util import fetch_gemini_response 
 
@@ -78,12 +79,16 @@ def generate_code():
     return str(random.randint(100000, 999999))
 
 def send_email(subject, recipient, body):
+    message = Mail(
+        from_email=os.getenv("MAIL_USERNAME"),
+        to_emails=recipient,
+        subject=subject,
+        plain_text_content=body
+    )
     try:
-        with mail.connect() as conn:
-            msg = Message(subject=subject, sender=app.config["MAIL_USERNAME"], recipients=[recipient])
-            msg.body = body
-            conn.send(msg)
-        print(f"✅ Email sent to {recipient}")
+        sg = SendGridAPIClient(os.getenv("SENDGRID_API_KEY"))
+        response = sg.send(message)
+        print(f"✅ Email sent to {recipient}, status code: {response.status_code}")
         return True
     except Exception as e:
         print("❌ Email send failed:", e)
@@ -261,19 +266,14 @@ def reset_password():
 
 @app.route("/api/test-email", methods=["GET"])
 def test_email():
-    try:
-        test_recipient = "bsampath563@gmail.com"  # Replace with your email to receive test
-        subject = "Test Email from MEDICA Backend"
-        body = "✅ This is a test email from your Flask app running on Render."
+    test_recipient = "bsampath563@gmail.com"
+    subject = "Test Email from MEDICA Backend"
+    body = "✅ This is a test email from your Flask app running on Render."
 
-        msg = Message(subject=subject, sender=app.config["MAIL_USERNAME"], recipients=[test_recipient])
-        msg.body = body
-        mail.send(msg)
-
+    if send_email(subject, test_recipient, body):
         return jsonify({"success": True, "message": f"Test email sent to {test_recipient}!"}), 200
-    except Exception as e:
-        print("❌ Test email failed:", e)
-        return jsonify({"success": False, "error": str(e)}), 500
+    return jsonify({"success": False, "error": "Failed to send test email"}), 500
+
 
 
 # === Proxy to Hugging Face for Prediction ===
