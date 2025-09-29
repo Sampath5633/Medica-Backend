@@ -57,22 +57,21 @@ users_collection = db["users"]
 feedback_collection = db["feedbacks"]   
 
 # === Utility: Send Email ===
+# === Utility Functions ===
 def generate_jwt(email):
-    payload = {"email": email, "exp": datetime.utcnow() + timedelta(hours=2)}
+    payload = {
+        "email": email,
+        "exp": datetime.now(timezone.utc) + timedelta(hours=2)
+    }
     token = jwt.encode(payload, app.config["SECRET_KEY"], algorithm="HS256")
     return token
 
 def generate_code():
     return str(random.randint(100000, 999999))
 
-# === Utility function for sending emails ===
 def send_email(subject, recipient, body):
     try:
-        msg = Message(
-            subject=subject,
-            sender=app.config["MAIL_USERNAME"],
-            recipients=[recipient],
-        )
+        msg = Message(subject=subject, sender=app.config["MAIL_USERNAME"], recipients=[recipient])
         msg.body = body
         mail.send(msg)
         print(f"✅ Email sent to {recipient}")
@@ -81,48 +80,40 @@ def send_email(subject, recipient, body):
         print("❌ Email send failed:", e)
         return False
 
-# === Send Verification Code ===
+# === Routes ===
 @app.route("/api/send-verification-code", methods=["POST"])
 def send_verification_code():
     data = request.json
-    user_email = data.get("email")
-    if not isinstance(user_email, str) or not user_email.strip():
+    email = data.get("email")
+    if not isinstance(email, str) or not email.strip():
         return jsonify({"error": "Email is required"}), 400
 
     code = generate_code()
     users_collection.update_one(
-        {"email": user_email},
-        {"$set": {"verification_code": code, "code_expiry": datetime.utcnow() + timedelta(minutes=10)}},
+        {"email": email},
+        {"$set": {"verification_code": code, "code_expiry": datetime.now(timezone.utc) + timedelta(minutes=10)}},
         upsert=True
     )
 
-    if send_email("🔐 Your Verification Code", user_email, f"Your verification code is {code}. It will expire in 10 minutes."):
+    if send_email("🔐 Your Verification Code", email, f"Your verification code is {code}. It expires in 10 minutes."):
         return jsonify({"message": "Verification code sent successfully"})
-    else:
-        return jsonify({"error": "Failed to send verification code"}), 500
+    return jsonify({"error": "Failed to send verification code"}), 500
 
-# === Register ===
 @app.route("/api/register", methods=["POST"])
 def register():
     data = request.get_json(force=True)
     email = data.get("email")
     password = data.get("password")
-
-    if not isinstance(email, str) or not isinstance(password, str):
+    if not all(isinstance(x, str) for x in [email, password]):
         return jsonify({"message": "Missing or invalid email/password"}), 400
 
     if users_collection.find_one({"email": email}):
         return jsonify({"message": "User already exists"}), 400
 
     hashed_password = generate_password_hash(password)
-    users_collection.insert_one({
-        "email": email,
-        "password": hashed_password,
-        "is_verified": False
-    })
+    users_collection.insert_one({"email": email, "password": hashed_password, "is_verified": False})
     return jsonify({"message": "Registration successful"}), 201
 
-# === Login Step 1 ===
 @app.route("/api/login-step1", methods=["POST"])
 def login_step1():
     try:
@@ -130,18 +121,14 @@ def login_step1():
         email = data.get("email")
         password = data.get("password")
 
-        if not isinstance(email, str) or not isinstance(password, str):
+        if not all(isinstance(x, str) for x in [email, password]):
             return jsonify({"message": "Email and password must be strings"}), 400
 
         user = users_collection.find_one({"email": email})
         if not user:
             return jsonify({"message": "User not found"}), 401
 
-        stored_password = user.get("password")
-        if not isinstance(stored_password, str):
-            return jsonify({"message": "Invalid credentials"}), 401
-
-        if not check_password_hash(stored_password, password):
+        if not check_password_hash(user.get("password", ""), password):
             return jsonify({"message": "Invalid credentials"}), 401
 
         if user.get("is_verified", False):
@@ -152,23 +139,22 @@ def login_step1():
         code = generate_code()
         users_collection.update_one(
             {"email": email},
-            {"$set": {"verification_code": code, "code_expiry": datetime.utcnow() + timedelta(minutes=10)}}
+            {"$set": {"verification_code": code, "code_expiry": datetime.now(timezone.utc) + timedelta(minutes=10)}}
         )
         send_email("Your MEDICA Verification Code", email, f"Your verification code is: {code}")
         return jsonify({"step": 2}), 200
+
     except Exception as e:
         print("Error in login-step1:", e)
-        return jsonify({"message": "Internal Server Error"}), 500
+        return jsonify({"message": "Internal Server Error", "error": str(e)}), 500
 
-# === Login Step 2 ===
 @app.route("/api/login-step2", methods=["POST"])
 def login_step2():
     try:
         data = request.get_json(force=True)
         email = data.get("email")
         code = data.get("code")
-
-        if not isinstance(email, str) or not isinstance(code, str):
+        if not all(isinstance(x, str) for x in [email, code]):
             return jsonify({"message": "Email and code must be strings"}), 400
 
         user = users_collection.find_one({"email": email})
@@ -182,16 +168,16 @@ def login_step2():
         if user.get("verification_code") != code:
             return jsonify({"message": "Invalid verification code"}), 401
 
-        if datetime.utcnow() > user.get("code_expiry", datetime.utcnow()):
+        if datetime.now(timezone.utc) > user.get("code_expiry", datetime.now(timezone.utc)):
             return jsonify({"message": "Code expired"}), 401
 
         users_collection.update_one(
             {"email": email},
-            {"$unset": {"verification_code": "", "code_expiry": ""},
-             "$set": {"is_verified": True}}
+            {"$unset": {"verification_code": "", "code_expiry": ""}, "$set": {"is_verified": True}}
         )
         token = generate_jwt(email)
         return jsonify({"message": "Login successful", "token": token}), 200
+
     except Exception as e:
         print("Error in login-step2:", e)
         return jsonify({"message": "Login step 2 failed", "error": str(e)}), 500
