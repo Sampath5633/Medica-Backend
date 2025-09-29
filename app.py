@@ -37,6 +37,7 @@ def log_request_info():
     print(f"➡️ {request.method} {request.path}")
     if request.method == 'OPTIONS':
         print("🔄 Handling preflight OPTIONS request")
+
 # === SECRET_KEY for JWT ===
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "default_secret_key_here")
 if not app.config["SECRET_KEY"]:
@@ -183,26 +184,43 @@ def send_reset_code():
     try:
         data = request.get_json(force=True)
         email = data.get("email")
-        if not isinstance(email, str):
+
+        if not isinstance(email, str) or not email.strip():
             return jsonify({"message": "Invalid email"}), 400
 
         user = users_collection.find_one({"email": email})
         if not user:
             return jsonify({"message": "User not found"}), 404
 
+        # Generate reset code
         code = generate_code()
-        print("📌 Generated code:", code)
+        expiry = datetime.now(timezone.utc) + timedelta(minutes=10)
+
+        # Save code and expiry in DB
         users_collection.update_one(
             {"email": email},
-            {"$set": {"reset_code": code, "reset_expiry": datetime.now(timezone.utc) + timedelta(minutes=10)}}
-        
+            {"$set": {"reset_code": code, "reset_expiry": expiry}}
         )
-        send_email("MEDICA Password Reset Code", email, f"Your password reset code is: {code}")
-        return jsonify({"message": "Reset code sent"}), 200
+
+        # Try sending email
+        email_body = f"Your password reset code is: {code}. It expires in 10 minutes."
+        success = send_email("MEDICA Password Reset Code", email, email_body)
+
+        if not success:
+            # Remove the code if email fails
+            users_collection.update_one(
+                {"email": email},
+                {"$unset": {"reset_code": "", "reset_expiry": ""}}
+            )
+            return jsonify({"message": "Failed to send email. Check server logs."}), 500
+
+        print(f"📌 Reset code {code} sent to {email}")
+        return jsonify({"message": "Reset code sent successfully"}), 200
 
     except Exception as e:
-        print("Error in send-reset-code:", e)
+        print("❌ Error in send-reset-code:", e)
         return jsonify({"message": "Internal Server Error", "error": str(e)}), 500
+
 
 # === Reset Password ===
 @app.route("/api/reset-password", methods=["POST"])
