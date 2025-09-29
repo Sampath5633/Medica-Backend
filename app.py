@@ -12,8 +12,7 @@ from reportlab.pdfgen import canvas
 from pymongo import MongoClient
 from werkzeug.security import generate_password_hash, check_password_hash
 import jwt
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
+
 from medication_patterns import default_patterns
 from your_gemini_util import fetch_gemini_response 
 
@@ -78,40 +77,17 @@ def generate_jwt(email):
 def generate_code():
     return str(random.randint(100000, 999999))
 
-from flask_mail import Mail as FlaskMail, Message as FlaskMessage
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail as SendGridMail
-
-# Initialize Flask-Mail (in case you want to use SMTP instead of SendGrid later)
-mail = FlaskMail(app)
-
 def send_email(subject, recipient, body):
     try:
-        # Use SendGrid (primary)
-        sg = SendGridAPIClient(os.getenv("SENDGRID_API_KEY"))
-        message = SendGridMail(
-            from_email=os.getenv("MAIL_USERNAME"),
-            to_emails=recipient,
-            subject=subject,
-            plain_text_content=body
-        )
-        response = sg.send(message)
-        print(f"✅ Email sent to {recipient}, status: {response.status_code}, body: {response.body}")
+        with mail.connect() as conn:
+            msg = Message(subject=subject, sender=app.config["MAIL_USERNAME"], recipients=[recipient])
+            msg.body = body
+            conn.send(msg)
+        print(f"✅ Email sent to {recipient}")
         return True
     except Exception as e:
-        print("❌ SendGrid email failed:", str(e))
-
-        # Fallback: Try Flask-Mail SMTP
-        try:
-            msg = FlaskMessage(subject, recipients=[recipient])
-            msg.body = body
-            mail.send(msg)
-            print(f"📧 Fallback via SMTP successful to {recipient}")
-            return True
-        except Exception as smtp_err:
-            print("❌ SMTP fallback failed:", str(smtp_err))
-            return False
-
+        print("❌ Email send failed:", e)
+        return False
 
 
 
@@ -286,32 +262,18 @@ def reset_password():
 @app.route("/api/test-email", methods=["GET"])
 def test_email():
     try:
-        test_recipient = os.getenv("TEST_EMAIL", "youremail@example.com")
-        subject = "✅ MEDICA Test Email"
-        body = "This is a test email from the MEDICA backend."
+        test_recipient = "bsampath563@gmail.com"  # Replace with your email to receive test
+        subject = "Test Email from MEDICA Backend"
+        body = "✅ This is a test email from your Flask app running on Render."
 
-        print(f"📨 Attempting to send test email to {test_recipient}")
+        msg = Message(subject=subject, sender=app.config["MAIL_USERNAME"], recipients=[test_recipient])
+        msg.body = body
+        mail.send(msg)
 
-        success = send_email(subject, test_recipient, body)
-
-        if success:
-            return jsonify({
-                "message": "Test email sent successfully",
-                "recipient": test_recipient
-            }), 200
-        else:
-            return jsonify({
-                "message": "Failed to send test email. Check server logs.",
-                "recipient": test_recipient
-            }), 500
-
+        return jsonify({"success": True, "message": f"Test email sent to {test_recipient}!"}), 200
     except Exception as e:
-        print("❌ Error in /api/test-email:", str(e))
-        return jsonify({
-            "message": "Internal Server Error",
-            "error": str(e)
-        }), 500
-
+        print("❌ Test email failed:", e)
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 # === Proxy to Hugging Face for Prediction ===
