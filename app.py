@@ -79,14 +79,17 @@ def generate_code():
 
 def send_email(subject, recipient, body):
     try:
-        msg = Message(subject=subject, sender=app.config["MAIL_USERNAME"], recipients=[recipient])
-        msg.body = body
-        mail.send(msg)
+        with mail.connect() as conn:
+            msg = Message(subject=subject, sender=app.config["MAIL_USERNAME"], recipients=[recipient])
+            msg.body = body
+            conn.send(msg)
         print(f"✅ Email sent to {recipient}")
         return True
     except Exception as e:
         print("❌ Email send failed:", e)
         return False
+
+
 
 # === Send Verification Code ===
 @app.route("/api/send-verification-code", methods=["POST"])
