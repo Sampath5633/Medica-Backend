@@ -61,6 +61,9 @@ feedback_collection = db["feedbacks"]
 
 # === Utility: Send Email ===
 # === Utility Functions ===
+from datetime import datetime, timedelta, timezone
+
+# === JWT Generation ===
 def generate_jwt(email):
     payload = {
         "email": email,
@@ -69,6 +72,7 @@ def generate_jwt(email):
     token = jwt.encode(payload, app.config["SECRET_KEY"], algorithm="HS256")
     return token
 
+# === Verification / Utility ===
 def generate_code():
     return str(random.randint(100000, 999999))
 
@@ -83,7 +87,7 @@ def send_email(subject, recipient, body):
         print("❌ Email send failed:", e)
         return False
 
-# === Routes ===
+# === Send Verification Code ===
 @app.route("/api/send-verification-code", methods=["POST"])
 def send_verification_code():
     data = request.json
@@ -102,21 +106,7 @@ def send_verification_code():
         return jsonify({"message": "Verification code sent successfully"})
     return jsonify({"error": "Failed to send verification code"}), 500
 
-@app.route("/api/register", methods=["POST"])
-def register():
-    data = request.get_json(force=True)
-    email = data.get("email")
-    password = data.get("password")
-    if not all(isinstance(x, str) for x in [email, password]):
-        return jsonify({"message": "Missing or invalid email/password"}), 400
-
-    if users_collection.find_one({"email": email}):
-        return jsonify({"message": "User already exists"}), 400
-
-    hashed_password = generate_password_hash(password)
-    users_collection.insert_one({"email": email, "password": hashed_password, "is_verified": False})
-    return jsonify({"message": "Registration successful"}), 201
-
+# === Login Step 1 ===
 @app.route("/api/login-step1", methods=["POST"])
 def login_step1():
     try:
@@ -151,12 +141,14 @@ def login_step1():
         print("Error in login-step1:", e)
         return jsonify({"message": "Internal Server Error", "error": str(e)}), 500
 
+# === Login Step 2 ===
 @app.route("/api/login-step2", methods=["POST"])
 def login_step2():
     try:
         data = request.get_json(force=True)
         email = data.get("email")
         code = data.get("code")
+
         if not all(isinstance(x, str) for x in [email, code]):
             return jsonify({"message": "Email and code must be strings"}), 400
 
@@ -201,13 +193,14 @@ def send_reset_code():
         code = generate_code()
         users_collection.update_one(
             {"email": email},
-            {"$set": {"reset_code": code, "reset_expiry": datetime.utcnow() + timedelta(minutes=10)}}
+            {"$set": {"reset_code": code, "reset_expiry": datetime.now(timezone.utc) + timedelta(minutes=10)}}
         )
         send_email("MEDICA Password Reset Code", email, f"Your password reset code is: {code}")
         return jsonify({"message": "Reset code sent"}), 200
+
     except Exception as e:
         print("Error in send-reset-code:", e)
-        return jsonify({"message": "Internal Server Error"}), 500
+        return jsonify({"message": "Internal Server Error", "error": str(e)}), 500
 
 # === Reset Password ===
 @app.route("/api/reset-password", methods=["POST"])
@@ -228,7 +221,7 @@ def reset_password():
         if user.get("reset_code") != code:
             return jsonify({"message": "Invalid reset code"}), 401
 
-        if datetime.utcnow() > user.get("reset_expiry", datetime.utcnow()):
+        if datetime.now(timezone.utc) > user.get("reset_expiry", datetime.now(timezone.utc)):
             return jsonify({"message": "Reset code expired"}), 401
 
         hashed_password = generate_password_hash(new_password)
@@ -238,9 +231,11 @@ def reset_password():
              "$unset": {"reset_code": "", "reset_expiry": ""}}
         )
         return jsonify({"message": "Password reset successful"}), 200
+
     except Exception as e:
         print("Error in reset-password:", e)
         return jsonify({"message": "Failed to reset password", "error": str(e)}), 500
+
 
 
 # === Proxy to Hugging Face for Prediction ===
