@@ -195,10 +195,9 @@ def send_reset_code():
         users_collection.update_one(
             {"email": email},
             {"$set": {"reset_code": code, "reset_expiry": datetime.now(timezone.utc) + timedelta(minutes=10)}}
-        print("📌 Updated DB")
+        
         )
         send_email("MEDICA Password Reset Code", email, f"Your password reset code is: {code}")
-        print("📌 Email sent")
         return jsonify({"message": "Reset code sent"}), 200
 
     except Exception as e:
