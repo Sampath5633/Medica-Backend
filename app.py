@@ -259,21 +259,17 @@ def reset_password():
         print("Error in reset-password:", e)
         return jsonify({"message": "Failed to reset password", "error": str(e)}), 500
 
-@app.route("/api/test-email", methods=["GET"])
-def test_email():
+@app.route("/api/test-send-email", methods=["GET"])
+def test_send_email():
     try:
-        test_recipient = "bsampath563@gmail.com"  # Replace with your email to receive test
-        subject = "Test Email from MEDICA Backend"
-        body = "✅ This is a test email from your Flask app running on Render."
-
-        msg = Message(subject=subject, sender=app.config["MAIL_USERNAME"], recipients=[test_recipient])
-        msg.body = body
-        mail.send(msg)
-
-        return jsonify({"success": True, "message": f"Test email sent to {test_recipient}!"}), 200
+        import socket
+        host, port = "smtp.gmail.com", 587
+        s = socket.create_connection((host, port), timeout=10)
+        s.close()
+        return jsonify({"success": True, "message": "Can reach SMTP!"})
     except Exception as e:
-        print("❌ Test email failed:", e)
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": str(e)})
+
 
 
 # === Proxy to Hugging Face for Prediction ===
