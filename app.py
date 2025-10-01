@@ -39,6 +39,7 @@ def log_request_info():
         print("🔄 Handling preflight OPTIONS request")
 
 # === Mail Configuration ===
+app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "fallback-secret")
 
 
 # === MongoDB Setup ===
@@ -50,9 +51,13 @@ feedback_collection = db["feedbacks"]
 
 # === Utility: Send Email ===
 def generate_jwt(email):
+    secret = app.config.get("SECRET_KEY")
+    if not secret:
+        raise ValueError("SECRET_KEY not set in environment")
     payload = {"email": email, "exp": datetime.utcnow() + timedelta(hours=2)}
-    token = jwt.encode(payload, app.config["SECRET_KEY"], algorithm="HS256")
+    token = jwt.encode(payload, secret, algorithm="HS256")
     return token
+
 
 def generate_code():
     return str(random.randint(100000, 999999))
@@ -81,7 +86,8 @@ def send_email(subject, recipient, body):
             }]
         }
         response = requests.post(url, headers=headers, json=data)
-        print(f"SendGrid status: {response.status_code}, response: {response.text}")
+        print(f"SendGrid response: {response.status_code} {response.text}")
+
         if response.status_code in [200, 202]:
             print(f"✅ Email sent to {recipient}")
             return True
@@ -150,6 +156,9 @@ def login_step1():
             return jsonify({"message": "User not found"}), 401
 
         stored_password = user.get("password")
+        if not stored_password:
+            return jsonify({"message": "Invalid credentials"}), 401
+        
         if not isinstance(stored_password, str):
             return jsonify({"message": "Invalid credentials"}), 401
 
@@ -169,8 +178,10 @@ def login_step1():
         send_email("Your MEDICA Verification Code", email, f"Your verification code is: {code}")
         return jsonify({"step": 2}), 200
     except Exception as e:
-        print("Error in login-step1:", e)
-        return jsonify({"message": "Internal Server Error"}), 500
+        import traceback
+        traceback.print_exc()
+        return jsonify({"message": "Internal Server Error", "error": str(e)}), 500
+
 
 # === Login Step 2 ===
 @app.route("/api/login-step2", methods=["POST"])
