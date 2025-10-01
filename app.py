@@ -38,21 +38,9 @@ def log_request_info():
     if request.method == 'OPTIONS':
         print("🔄 Handling preflight OPTIONS request")
 
-# === SECRET_KEY for JWT ===
-app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "default_secret_key_here")
-if not app.config["SECRET_KEY"]:
-    raise ValueError("SECRET_KEY is not set in environment variables!")
-
 # === Mail Configuration ===
-app.config.update(
-    MAIL_SERVER=os.getenv("MAIL_SERVER"),
-    MAIL_PORT=int(os.getenv("MAIL_PORT", 587)),
-    MAIL_USERNAME=os.getenv("MAIL_USERNAME"),
-    MAIL_PASSWORD=os.getenv("MAIL_PASSWORD"),
-    MAIL_USE_TLS=os.getenv("MAIL_USE_TLS", "True") == "True",
-    MAIL_USE_SSL=os.getenv("MAIL_USE_SSL", "False") == "True"
-)
-mail = Mail(app)
+
+
 # === MongoDB Setup ===
 mongo_uri = os.getenv("MONGO_URI")
 client = MongoClient(mongo_uri)
@@ -61,54 +49,89 @@ users_collection = db["users"]
 feedback_collection = db["feedbacks"]   
 
 # === Utility: Send Email ===
-# === Utility Functions ===
-from datetime import datetime, timedelta, timezone
-
-# === JWT Generation ===
 def generate_jwt(email):
-    payload = {
-        "email": email,
-        "exp": datetime.now(timezone.utc) + timedelta(hours=2)
-    }
+    payload = {"email": email, "exp": datetime.utcnow() + timedelta(hours=2)}
     token = jwt.encode(payload, app.config["SECRET_KEY"], algorithm="HS256")
     return token
 
-# === Verification / Utility ===
 def generate_code():
     return str(random.randint(100000, 999999))
 
+# === Utility function for sending emails ===
+# === Utility function for sending emails via SendGrid API ===
 def send_email(subject, recipient, body):
-    try:
-        with mail.connect() as conn:
-            msg = Message(subject=subject, sender=app.config["MAIL_USERNAME"], recipients=[recipient])
-            msg.body = body
-            conn.send(msg)
-        print(f"✅ Email sent to {recipient}")
-        return True
-    except Exception as e:
-        print("❌ Email send failed:", e)
-        return False
+    import os
+    import requests
 
+    try:
+        url = "https://api.sendgrid.com/v3/mail/send"
+        headers = {
+            "Authorization": f"Bearer {os.getenv('SENDGRID_API_KEY')}",
+            "Content-Type": "application/json"
+        }
+        data = {
+            "personalizations": [{
+                "to": [{"email": recipient}],
+                "subject": subject
+            }],
+            "from": {"email": os.getenv("FROM_EMAIL")},
+            "content": [{
+                "type": "text/plain",
+                "value": body
+            }]
+        }
+        response = requests.post(url, headers=headers, json=data)
+        if response.status_code in [200, 202]:
+            print(f"✅ Email sent to {recipient}")
+            return True
+        else:
+            print(f"❌ Email send failed: {response.status_code}, {response.text}")
+            return False
+    except Exception as e:
+        print("❌ SendGrid email error:", e)
+        return False
 
 
 # === Send Verification Code ===
 @app.route("/api/send-verification-code", methods=["POST"])
 def send_verification_code():
     data = request.json
-    email = data.get("email")
-    if not isinstance(email, str) or not email.strip():
+    user_email = data.get("email")
+    if not isinstance(user_email, str) or not user_email.strip():
         return jsonify({"error": "Email is required"}), 400
 
     code = generate_code()
     users_collection.update_one(
-        {"email": email},
-        {"$set": {"verification_code": code, "code_expiry": datetime.now(timezone.utc) + timedelta(minutes=10)}},
+        {"email": user_email},
+        {"$set": {"verification_code": code, "code_expiry": datetime.utcnow() + timedelta(minutes=10)}},
         upsert=True
     )
 
-    if send_email("🔐 Your Verification Code", email, f"Your verification code is {code}. It expires in 10 minutes."):
+    if send_email("🔐 Your Verification Code", user_email, f"Your verification code is {code}. It will expire in 10 minutes."):
         return jsonify({"message": "Verification code sent successfully"})
-    return jsonify({"error": "Failed to send verification code"}), 500
+    else:
+        return jsonify({"error": "Failed to send verification code"}), 500
+
+# === Register ===
+@app.route("/api/register", methods=["POST"])
+def register():
+    data = request.get_json(force=True)
+    email = data.get("email")
+    password = data.get("password")
+
+    if not isinstance(email, str) or not isinstance(password, str):
+        return jsonify({"message": "Missing or invalid email/password"}), 400
+
+    if users_collection.find_one({"email": email}):
+        return jsonify({"message": "User already exists"}), 400
+
+    hashed_password = generate_password_hash(password)
+    users_collection.insert_one({
+        "email": email,
+        "password": hashed_password,
+        "is_verified": False
+    })
+    return jsonify({"message": "Registration successful"}), 201
 
 # === Login Step 1 ===
 @app.route("/api/login-step1", methods=["POST"])
@@ -118,14 +141,18 @@ def login_step1():
         email = data.get("email")
         password = data.get("password")
 
-        if not all(isinstance(x, str) for x in [email, password]):
+        if not isinstance(email, str) or not isinstance(password, str):
             return jsonify({"message": "Email and password must be strings"}), 400
 
         user = users_collection.find_one({"email": email})
         if not user:
             return jsonify({"message": "User not found"}), 401
 
-        if not check_password_hash(user.get("password", ""), password):
+        stored_password = user.get("password")
+        if not isinstance(stored_password, str):
+            return jsonify({"message": "Invalid credentials"}), 401
+
+        if not check_password_hash(stored_password, password):
             return jsonify({"message": "Invalid credentials"}), 401
 
         if user.get("is_verified", False):
@@ -136,14 +163,13 @@ def login_step1():
         code = generate_code()
         users_collection.update_one(
             {"email": email},
-            {"$set": {"verification_code": code, "code_expiry": datetime.now(timezone.utc) + timedelta(minutes=10)}}
+            {"$set": {"verification_code": code, "code_expiry": datetime.utcnow() + timedelta(minutes=10)}}
         )
         send_email("Your MEDICA Verification Code", email, f"Your verification code is: {code}")
         return jsonify({"step": 2}), 200
-
     except Exception as e:
         print("Error in login-step1:", e)
-        return jsonify({"message": "Internal Server Error", "error": str(e)}), 500
+        return jsonify({"message": "Internal Server Error"}), 500
 
 # === Login Step 2 ===
 @app.route("/api/login-step2", methods=["POST"])
@@ -153,7 +179,7 @@ def login_step2():
         email = data.get("email")
         code = data.get("code")
 
-        if not all(isinstance(x, str) for x in [email, code]):
+        if not isinstance(email, str) or not isinstance(code, str):
             return jsonify({"message": "Email and code must be strings"}), 400
 
         user = users_collection.find_one({"email": email})
@@ -167,16 +193,16 @@ def login_step2():
         if user.get("verification_code") != code:
             return jsonify({"message": "Invalid verification code"}), 401
 
-        if datetime.now(timezone.utc) > user.get("code_expiry", datetime.now(timezone.utc)):
+        if datetime.utcnow() > user.get("code_expiry", datetime.utcnow()):
             return jsonify({"message": "Code expired"}), 401
 
         users_collection.update_one(
             {"email": email},
-            {"$unset": {"verification_code": "", "code_expiry": ""}, "$set": {"is_verified": True}}
+            {"$unset": {"verification_code": "", "code_expiry": ""},
+             "$set": {"is_verified": True}}
         )
         token = generate_jwt(email)
         return jsonify({"message": "Login successful", "token": token}), 200
-
     except Exception as e:
         print("Error in login-step2:", e)
         return jsonify({"message": "Login step 2 failed", "error": str(e)}), 500
@@ -187,43 +213,23 @@ def send_reset_code():
     try:
         data = request.get_json(force=True)
         email = data.get("email")
-
-        if not isinstance(email, str) or not email.strip():
+        if not isinstance(email, str):
             return jsonify({"message": "Invalid email"}), 400
 
         user = users_collection.find_one({"email": email})
         if not user:
             return jsonify({"message": "User not found"}), 404
 
-        # Generate reset code
         code = generate_code()
-        expiry = datetime.now(timezone.utc) + timedelta(minutes=10)
-
-        # Save code and expiry in DB
         users_collection.update_one(
             {"email": email},
-            {"$set": {"reset_code": code, "reset_expiry": expiry}}
+            {"$set": {"reset_code": code, "reset_expiry": datetime.utcnow() + timedelta(minutes=10)}}
         )
-
-        # Try sending email
-        email_body = f"Your password reset code is: {code}. It expires in 10 minutes."
-        success = send_email("MEDICA Password Reset Code", email, email_body)
-
-        if not success:
-            # Remove the code if email fails
-            users_collection.update_one(
-                {"email": email},
-                {"$unset": {"reset_code": "", "reset_expiry": ""}}
-            )
-            return jsonify({"message": "Failed to send email. Check server logs."}), 500
-
-        print(f"📌 Reset code {code} sent to {email}")
-        return jsonify({"message": "Reset code sent successfully"}), 200
-
+        send_email("MEDICA Password Reset Code", email, f"Your password reset code is: {code}")
+        return jsonify({"message": "Reset code sent"}), 200
     except Exception as e:
-        print("❌ Error in send-reset-code:", e)
-        return jsonify({"message": "Internal Server Error", "error": str(e)}), 500
-
+        print("Error in send-reset-code:", e)
+        return jsonify({"message": "Internal Server Error"}), 500
 
 # === Reset Password ===
 @app.route("/api/reset-password", methods=["POST"])
@@ -244,7 +250,7 @@ def reset_password():
         if user.get("reset_code") != code:
             return jsonify({"message": "Invalid reset code"}), 401
 
-        if datetime.now(timezone.utc) > user.get("reset_expiry", datetime.now(timezone.utc)):
+        if datetime.utcnow() > user.get("reset_expiry", datetime.utcnow()):
             return jsonify({"message": "Reset code expired"}), 401
 
         hashed_password = generate_password_hash(new_password)
@@ -254,22 +260,9 @@ def reset_password():
              "$unset": {"reset_code": "", "reset_expiry": ""}}
         )
         return jsonify({"message": "Password reset successful"}), 200
-
     except Exception as e:
         print("Error in reset-password:", e)
         return jsonify({"message": "Failed to reset password", "error": str(e)}), 500
-
-@app.route("/api/test-send-email", methods=["GET"])
-def test_send_email():
-    try:
-        import socket
-        host, port = "smtp.gmail.com", 587
-        s = socket.create_connection((host, port), timeout=10)
-        s.close()
-        return jsonify({"success": True, "message": "Can reach SMTP!"})
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
-
 
 
 # === Proxy to Hugging Face for Prediction ===
