@@ -81,6 +81,7 @@ def send_email(subject, recipient, body):
             }]
         }
         response = requests.post(url, headers=headers, json=data)
+        print(f"SendGrid status: {response.status_code}, response: {response.text}")
         if response.status_code in [200, 202]:
             print(f"✅ Email sent to {recipient}")
             return True
