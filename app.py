@@ -29,29 +29,22 @@ load_dotenv(dotenv_path=env_path)
 app = Flask(__name__)
 
 # === Enable CORS for frontend ===
-CORS(app, origins=["https://medica3.netlify.app"], supports_credentials=True)
-
-# Ensure we echo back allowed Origin and required CORS headers
-@app.after_request
-def apply_cors(response):
-    allowed_origins = {"https://medica3.netlify.app", "http://localhost:5173"}
-    origin = request.headers.get("Origin")
-    if origin in allowed_origins:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Vary"] = "Origin"  # tells caches the response varies by Origin
-    # Always expose these for preflight/requests
-    response.headers.setdefault("Access-Control-Allow-Headers", "Content-Type, Authorization")
-    response.headers.setdefault("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-    response.headers.setdefault("Access-Control-Allow-Credentials", "true")
-    return response
-
-
+CORS(app,
+     resources={r"/api/*": {"origins": ["https://medica3.netlify.app"]}},
+     supports_credentials=True)
 
 @app.before_request
-def log_request_info():
-    print(f"➡️ {request.method} {request.path}")
-    if request.method == 'OPTIONS':
-        print("🔄 Handling preflight OPTIONS request")
+def handle_preflight():
+    if request.method == "OPTIONS":
+        response = app.make_default_options_response()
+
+        headers = response.headers
+        headers["Access-Control-Allow-Origin"] = "https://medica3.netlify.app"
+        headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        headers["Access-Control-Allow-Credentials"] = "true"
+
+        return response
 
 # === Mail Configuration ===
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "fallback-secret")
