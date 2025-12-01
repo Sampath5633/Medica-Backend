@@ -28,36 +28,15 @@ load_dotenv(dotenv_path=env_path)
 # === Flask Setup ===
 app = Flask(__name__)
 
-from flask_cors import CORS
-
-CORS(
-    app,
-    resources={r"/*": {"origins": ["https://medica3.netlify.app"]}},
-    supports_credentials=True
-)
-
-@app.after_request
-def add_cors_headers(response):
-    response.headers["Access-Control-Allow-Origin"] = "https://medica3.netlify.app"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    response.headers["Access-Control-Allow-Credentials"] = "true"
-    return response
-
+# === Enable CORS for frontend ===
+CORS(app, resources={r"/*": {"origins": "https://medica3.netlify.app"}}, supports_credentials=True)
 
 
 @app.before_request
-def handle_preflight():
-    if request.method == "OPTIONS":
-        response = app.make_default_options_response()
-
-        headers = response.headers
-        headers["Access-Control-Allow-Origin"] = "https://medica3.netlify.app"
-        headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-        headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-        headers["Access-Control-Allow-Credentials"] = "true"
-
-        return response
+def log_request_info():
+    print(f"➡️ {request.method} {request.path}")
+    if request.method == 'OPTIONS':
+        print("🔄 Handling preflight OPTIONS request")
 
 # === Mail Configuration ===
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "fallback-secret")
@@ -68,7 +47,7 @@ mongo_uri = os.getenv("MONGO_URI")
 client = MongoClient(mongo_uri)
 db = client["medicalDB"]
 users_collection = db["users"]
-feedback_collection = db["feedbacks"]
+feedback_collection = db["feedbacks"]   
 
 # === Utility: Send Email ===
 def generate_jwt(email):
@@ -467,12 +446,16 @@ def ping_db():
         return jsonify({"message": "MongoDB connected ✅", "user_count": count})
     except Exception as e:
         return jsonify({"error": f"MongoDB connection failed: {str(e)}"}), 500
-
-# Handle preflight for feedback explicitly (helps some hosting setups)
+    
 @app.route("/api/feedback", methods=["OPTIONS"])
-def feedback_options():
-    # Returning 204 with CORS headers (after_request will attach headers)
-    return ("", 204)
+def feedback_preflight():
+    response = jsonify({"message": "Preflight OK"})
+    response.headers["Access-Control-Allow-Origin"] = "https://medica3.netlify.app"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    return response, 200
+
 
 
 @app.route('/api/feedback', methods=['POST'])
