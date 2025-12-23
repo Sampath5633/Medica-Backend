@@ -286,14 +286,55 @@ def predict():
     try:
         data = request.get_json()
 
-        # Always forward to Hugging Face model
         hf_url = "https://sampath563-medica-backend.hf.space/predict"
-        response = requests.post(hf_url, json=data)
-        return jsonify(response.json()), response.status_code
+        hf_response = requests.post(hf_url, json=data)
+
+        if hf_response.status_code != 200:
+            return jsonify({
+                "error": "Hugging Face prediction failed",
+                "details": hf_response.text
+            }), 500
+
+        result = hf_response.json()
+
+        # 🔐 JWT extraction
+        user_email = None
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            try:
+                decoded = jwt.decode(
+                    auth_header.split(" ")[1],
+                    app.config["SECRET_KEY"],
+                    algorithms=["HS256"]
+                )
+                user_email = decoded.get("email")
+            except Exception as e:
+                print("JWT decode failed:", e)
+
+        # 💾 Store prediction
+        if user_email:
+            diagnosis_collection.insert_one({
+                "email": user_email,
+                "input": {
+                    "symptoms": data.get("symptoms"),
+                    "vitals": {
+                        "blood_pressure": data.get("blood_pressure"),
+                        "heart_rate": data.get("heart_rate"),
+                        "age": data.get("age"),
+                        "temperature": data.get("temperature"),
+                        "oxygen_saturation": data.get("oxygen_saturation")
+                    }
+                },
+                "result": result.get("result"),
+                "createdAt": datetime.utcnow()
+            })
+
+        return jsonify(result), 200
 
     except Exception as e:
-        print("❌ Hugging Face proxy error:", str(e))
+        print("❌ Predict error:", e)
         return jsonify({"error": str(e)}), 500
+
 
 # === Proxy to Hugging Face for Re-Prediction ===
 @app.route("/repredict", methods=["POST"])
@@ -301,14 +342,56 @@ def repredict():
     try:
         data = request.get_json()
 
-        # Forward request to Hugging Face /repredict
         hf_url = "https://sampath563-medica-backend.hf.space/repredict"
-        response = requests.post(hf_url, json=data)
-        return jsonify(response.json()), response.status_code
+        hf_response = requests.post(hf_url, json=data)
+
+        if hf_response.status_code != 200:
+            return jsonify({
+                "error": "Hugging Face repredict failed",
+                "details": hf_response.text
+            }), 500
+
+        result = hf_response.json()
+
+        # 🔐 JWT extraction
+        user_email = None
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            try:
+                decoded = jwt.decode(
+                    auth_header.split(" ")[1],
+                    app.config["SECRET_KEY"],
+                    algorithms=["HS256"]
+                )
+                user_email = decoded.get("email")
+            except Exception as e:
+                print("JWT decode failed:", e)
+
+        # 💾 Store repredict
+        if user_email:
+            repredict_collection.insert_one({
+                "email": user_email,
+                "input": {
+                    "symptoms": data.get("symptoms"),
+                    "selected_symptoms": data.get("selected_symptoms"),
+                    "vitals": {
+                        "blood_pressure": data.get("blood_pressure"),
+                        "heart_rate": data.get("heart_rate"),
+                        "age": data.get("age"),
+                        "temperature": data.get("temperature"),
+                        "oxygen_saturation": data.get("oxygen_saturation")
+                    }
+                },
+                "result": result.get("result"),
+                "createdAt": datetime.utcnow()
+            })
+
+        return jsonify(result), 200
 
     except Exception as e:
-        print("❌ Hugging Face repredict proxy error:", str(e))
+        print("❌ Repredict error:", e)
         return jsonify({"error": str(e)}), 500
+
 
 
 # === Treatment Plan Generator ===
@@ -316,9 +399,8 @@ def repredict():
 @app.route("/api/treatment", methods=["POST"])
 def generate_treatment():
     try:
-        
-
         data = request.get_json()
+
         disease = data.get("disease", "").strip()
         symptoms = data.get("symptoms", [])
         age = data.get("age")
@@ -328,7 +410,9 @@ def generate_treatment():
         if not disease or not symptoms or not age:
             return jsonify({"error": "Missing required patient information"}), 400
 
-        # Construct prompt for Gemini
+        # -----------------------------
+        # 1️⃣ GENERATE TREATMENT (Gemini)
+        # -----------------------------
         prompt = f"""
 You are an AI medical assistant.
 
@@ -350,10 +434,13 @@ Instructions:
 3. Do NOT include any explanations or extra text.
 """
 
-        treatment_data = fetch_gemini_response(prompt)  # Your Gemini fetch function
+        treatment_data = fetch_gemini_response(prompt)
 
-        # Add intake/timing
+        # -----------------------------
+        # 2️⃣ ADD INTAKE / TIMING
+        # -----------------------------
         normalized_patterns = {k.lower(): v for k, v in default_patterns.items()}
+
         for med in treatment_data.get("medications", []):
             med_name_lower = med["name"].lower()
             if med_name_lower in normalized_patterns:
@@ -373,11 +460,50 @@ Instructions:
             "treatment": treatment_data
         }
 
+        # -----------------------------
+        # 3️⃣ EXTRACT USER FROM JWT
+        # -----------------------------
+        user_email = None
+        auth_header = request.headers.get("Authorization")
+
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+            try:
+                decoded = jwt.decode(
+                    token,
+                    app.config["SECRET_KEY"],
+                    algorithms=["HS256"]
+                )
+                user_email = decoded.get("email")
+            except Exception as e:
+                print("JWT decode failed:", e)
+
+        # -----------------------------
+        # 4️⃣ STORE IN MONGODB
+        # -----------------------------
+        if user_email:
+            treatment_history_collection.insert_one({
+                "email": user_email,
+                "input": {
+                    "disease": disease,
+                    "age": age,
+                    "symptoms": symptoms,
+                    "blood_group": blood_group,
+                    "duration": duration
+                },
+                "treatment": treatment_data,
+                "createdAt": datetime.utcnow()
+            })
+
+        # -----------------------------
+        # 5️⃣ RETURN RESPONSE
+        # -----------------------------
         return jsonify(full_prescription), 200
 
     except Exception as e:
         print(f"❌ Treatment endpoint error: {e}")
         return jsonify({"error": str(e)}), 500
+
 
 
 @app.route("/api/treatment/download", methods=["POST"])
