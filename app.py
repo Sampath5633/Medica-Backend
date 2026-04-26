@@ -15,7 +15,7 @@ import jwt
 
 from medication_patterns import default_patterns
 from your_gemini_util import fetch_gemini_response 
-
+print("✅ Imports done")
 # Temporary storage for prescriptions (you may replace with DB)
 # This is currently unused, but keeping it in case it's for future use.
 PRESCRIPTIONS = {}
@@ -44,7 +44,9 @@ app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "fallback-secret")
 
 # === MongoDB Setup ===
 mongo_uri = os.getenv("MONGO_URI")
+print(f"✅ MONGO_URI set: {bool(mongo_uri)}")
 client = MongoClient(mongo_uri)
+print("✅ MongoDB connected")
 db = client["medicalDB"]
 users_collection = db["users"]
 feedback_collection = db["feedbacks"]   
