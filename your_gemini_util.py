@@ -18,7 +18,7 @@ if not GEMINI_API_KEY:
 # Create client
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-MODEL_NAME = "models/gemini-flash-latest"
+MODEL_NAME = "models/gemini-3.6-flash"
 
 logging.basicConfig(level=logging.INFO)
 
