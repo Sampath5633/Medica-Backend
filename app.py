@@ -311,7 +311,9 @@ def predict():
                 )
                 user_email = decoded.get("email")
             except Exception as e:
-                print("JWT decode failed:", e)
+                print(f"❌ JWT decode failed: {type(e).__name__}: {e}")
+        else:
+            print("⚠️ No Authorization header received on /predict")
 
         # 💾 Store prediction
         if user_email:
@@ -368,6 +370,8 @@ def repredict():
                 user_email = decoded.get("email")
             except Exception as e:
                 print("JWT decode failed:", e)
+        else:
+            print("⚠️ No Authorization header received on /repredict")
 
         # 💾 Store repredict
         if user_email:
@@ -479,6 +483,8 @@ Instructions:
                 user_email = decoded.get("email")
             except Exception as e:
                 print("JWT decode failed:", e)
+        else:
+            print("⚠️ No Authorization header received on /api/treatment")
 
         # -----------------------------
         # 4️⃣ STORE IN MONGODB
