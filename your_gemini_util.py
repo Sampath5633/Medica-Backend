@@ -1,7 +1,10 @@
 import os
 import json
+import time
+import logging
 from dotenv import load_dotenv
 from google import genai
+from google.genai import types
 
 # Load environment variables
 load_dotenv()
@@ -16,37 +19,61 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 
 MODEL_NAME = "models/gemini-flash-latest"
 
+logging.basicConfig(level=logging.INFO)
+
+
 def fetch_gemini_response(prompt: str) -> dict:
-    try:
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt
-        )
+    max_retries = 3
 
-        text = response.text.strip()
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.4,
+                    max_output_tokens=2048,
+                )
+            )
 
-        # Remove markdown if present
-        if text.startswith("```"):
-            text = text.replace("```json", "").replace("```", "").strip()
+            if not response.candidates:
+                logging.warning("No candidates returned. Prompt feedback: %s", response.prompt_feedback)
+                raise ValueError("No candidates returned")
 
-        data = json.loads(text)
+            finish_reason = response.candidates[0].finish_reason
+            logging.info("Gemini finish reason: %s", finish_reason)
 
-        # Normalize medications
-        if isinstance(data.get("medications"), list):
-            data["medications"] = [
-                {"name": m} if isinstance(m, str) else m
-                for m in data["medications"]
-            ]
+            text = response.text.strip()
 
-        data.setdefault("lifestyle", [])
-        data.setdefault("followup", "Consult a doctor")
+            # Remove markdown fences if present
+            if text.startswith("```"):
+                text = text.replace("```json", "").replace("```", "").strip()
 
-        return data
+            data = json.loads(text)
 
-    except Exception as e:
-        print(f"❌ Gemini API error: {type(e).__name__}: {e}")
-        return {
-            "medications": [],
-            "lifestyle": [],
-            "followup": "AI unavailable. Please consult a doctor."
-        }
+            # Normalize medications
+            if isinstance(data.get("medications"), list):
+                data["medications"] = [
+                    {"name": m} if isinstance(m, str) else m
+                    for m in data["medications"]
+                ]
+
+            data.setdefault("lifestyle", [])
+            data.setdefault("followup", "Consult a doctor")
+
+            return data
+
+        except Exception as e:
+            logging.exception("Gemini attempt %d failed", attempt + 1)
+            if attempt < max_retries - 1:
+                wait = 2 ** attempt  # 1s, 2s, 4s
+                logging.info("Retrying in %ds...", wait)
+                time.sleep(wait)
+                continue
+
+            return {
+                "medications": [],
+                "lifestyle": [],
+                "followup": "AI unavailable. Please consult a doctor."
+            }
