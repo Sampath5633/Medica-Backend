@@ -44,7 +44,7 @@ def fetch_gemini_response(prompt: str) -> dict:
         return data
 
     except Exception as e:
-        print("❌ Gemini API error:", e)
+        print(f"❌ Gemini API error: {type(e).__name__}: {e}")
         return {
             "medications": [],
             "lifestyle": [],
