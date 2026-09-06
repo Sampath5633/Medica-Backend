@@ -13,7 +13,7 @@ huggingface_hub==0.35.1
 google-generativeai>=0.3.0
 PyJWT
 sendgrid
-google-genai
+google-genai==2.22.0
 pandas
 joblib
 dill
