@@ -1,12 +1,13 @@
 import os
 import json
 import time
+import random
 import logging
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
-# Load environment variables
+# Load environment variables from .env (locally) or from host env vars (in production)
 load_dotenv()
 
 # API Key
@@ -23,7 +24,7 @@ logging.basicConfig(level=logging.INFO)
 
 
 def fetch_gemini_response(prompt: str) -> dict:
-    max_retries = 3
+    max_retries = 4
 
     for attempt in range(max_retries):
         try:
@@ -66,14 +67,21 @@ def fetch_gemini_response(prompt: str) -> dict:
 
         except Exception as e:
             logging.exception("Gemini attempt %d failed", attempt + 1)
+
+            # Don't waste retries on a hard daily quota exhaustion — retrying can't fix this
+            if "RESOURCE_EXHAUSTED" in str(e) and "PerDay" in str(e):
+                logging.warning("Daily quota exhausted — no point retrying further")
+                break
+
             if attempt < max_retries - 1:
-                wait = 2 ** attempt  # 1s, 2s, 4s
-                logging.info("Retrying in %ds...", wait)
+                wait = (2 ** attempt) + random.uniform(0, 1)  # exponential backoff + jitter
+                logging.info("Retrying in %.1fs...", wait)
                 time.sleep(wait)
                 continue
 
-            return {
-                "medications": [],
-                "lifestyle": [],
-                "followup": "AI unavailable. Please consult a doctor."
-            }
+    # All retries exhausted (or daily quota hit) — return safe fallback
+    return {
+        "medications": [],
+        "lifestyle": [],
+        "followup": "AI unavailable. Please consult a doctor."
+    }
